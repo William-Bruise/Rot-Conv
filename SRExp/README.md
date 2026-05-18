@@ -38,3 +38,8 @@ More examples can be found in Demo.txt.
     year={2022},
     publisher={IEEE}
     }
+
+
+### SO(2) Approximation Variant
+- New model: `EDSR_SO2` (`SRExp/src/model/edsr_so2.py`).
+- Example command script: `bash src/demo_so2.sh`.
