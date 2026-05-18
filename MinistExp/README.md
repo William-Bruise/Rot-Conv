@@ -53,3 +53,8 @@ To test and train the simple cases, one call:
     year={2022},
     publisher={IEEE}
     }
+
+
+### SO(2) Approximation Variant
+- Use `python Rotated_MNIST_SO2_Main.py --tranNum 12` to instantiate the continuous-angle variant (Fconv_SO2).
+- For full training/testing, follow `Rotated_MNIST_Main.py` and keep the same optimizer/data settings for fair comparison.

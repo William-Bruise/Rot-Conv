@@ -143,6 +143,75 @@ class Fconv_PCA_out(nn.Module):
     
     
 
+
+
+class Fconv_SO2(nn.Module):
+    """Continuous-angle variant using Fourier phase interpolation on top of PCA bases."""
+
+    def __init__(self, sizeP, inNum, outNum, tranNum=8, inP=None, padding=None, ifIni=0, bias=True, Smooth=True, iniScale=1.0):
+        super(Fconv_SO2, self).__init__()
+        if inP is None:
+            inP = sizeP
+        self.tranNum = tranNum
+        self.outNum = outNum
+        self.inNum = inNum
+        self.sizeP = sizeP
+        self.expand = 1 if ifIni else tranNum
+        Basis, _, weight = GetBasis_PCA(sizeP, tranNum, inP, Smooth=Smooth)
+        self.register_buffer('Basis', Basis)
+        iniw = Getini_reg(Basis.size(3), inNum, outNum, self.expand, weight) * iniScale
+        self.weights = nn.Parameter(iniw, requires_grad=True)
+        self.theta_offset = nn.Parameter(torch.zeros(tranNum), requires_grad=True)
+        self.padding = 0 if padding is None else padding
+        self.ifbias = bias
+        if bias:
+            self.c = nn.Parameter(torch.zeros(1, outNum, 1, 1), requires_grad=True)
+        else:
+            self.register_parameter('c', None)
+
+    def _periodic_interp(self, filters):
+        # filters: [out, base_t, in_expand, k, k]
+        device = filters.device
+        base_t = filters.size(1)
+        theta = (torch.arange(self.tranNum, device=device, dtype=filters.dtype) + self.theta_offset) % self.tranNum
+        idx0 = torch.floor(theta).long() % base_t
+        idx1 = (idx0 + 1) % base_t
+        frac = (theta - torch.floor(theta)).view(1, self.tranNum, 1, 1, 1)
+        f0 = filters.index_select(1, idx0)
+        f1 = filters.index_select(1, idx1)
+        return (1.0 - frac) * f0 + frac * f1
+
+    def _build_filter(self):
+        tempW = torch.einsum('ijok,mnak->monaij', self.Basis, self.weights)
+        Num = self.tranNum // self.expand
+        tempWList = [torch.cat([tempW[:, i*Num:(i+1)*Num, :, -i:, :, :], tempW[:, i*Num:(i+1)*Num, :, :-i, :, :]], dim=3) for i in range(self.expand)]
+        tempW = torch.cat(tempWList, dim=1)
+        tempW = self._periodic_interp(tempW)
+        _filter = tempW.reshape([self.outNum * self.tranNum, self.inNum * self.expand, self.sizeP, self.sizeP])
+        return _filter
+
+    def forward(self, input):
+        _filter = self._build_filter() if self.training else self.filter
+        output = F.conv2d(input, _filter, padding=self.padding, dilation=1, groups=1)
+        if self.ifbias:
+            _bias = self.c.repeat([1, 1, self.tranNum, 1]).reshape([1, self.outNum * self.tranNum, 1, 1]) if self.training else self.bias
+            output = output + _bias
+        return output
+
+    def train(self, mode=True):
+        if mode:
+            if hasattr(self, 'filter'):
+                del self.filter
+                if self.ifbias and hasattr(self, 'bias'):
+                    del self.bias
+        elif self.training:
+            self.register_buffer('filter', self._build_filter())
+            if self.ifbias:
+                _bias = self.c.repeat([1, 1, self.tranNum, 1]).reshape([1, self.outNum * self.tranNum, 1, 1])
+                self.register_buffer('bias', _bias)
+        return super(Fconv_SO2, self).train(mode)
+
+
 class Fconv_1X1(nn.Module):
     
     def __init__(self, inNum, outNum, tranNum=8, ifIni=0, bias=True, Smooth = True, iniScale = 1.0):
